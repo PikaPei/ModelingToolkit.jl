@@ -216,24 +216,42 @@ end
 lhss(xs) = map(x->x.lhs, xs)
 rhss(xs) = map(x->x.rhs, xs)
 
-function equations(sys::ModelingToolkit.AbstractSystem; remove_aliases = true)
-    if isempty(sys.systems)
-        return sys.eqs
-    else
-        eqs = [sys.eqs;
-               reduce(vcat,
-                      namespace_equations.(sys.systems);
-                      init=Equation[])]
+# This decides what will be the final internal state of the system.
+function get_nonaliases(sys)
+    get_variables.(filter(!iszero, lhss(sys.eqs))) |> Iterators.flatten |> collect
+end
 
-        if !remove_aliases
-            return eqs
-        end
-        aliases = observed(sys)
-        dict = Dict(lhss(aliases) .=> rhss(aliases))
-
-        # Substitute aliases
-        return Equation.(lhss(eqs), Rewriters.Fixpoint(x->substitute(x, dict)).(rhss(eqs)))
+function eliminate_aliases(sys, keep=nothing)
+    if keep === nothing
+        keep = get_nonaliases(sys)
     end
+    eqs = sys.eqs
+    idxs = findall(x->x.lhs isa Constant && iszero(x.lhs), eqs)
+    isempty(idxs) && return sys.eqs, sys.observed
+
+    to_eliminate = []
+    for i in idxs
+        append!(to_eliminate, filter(x->!any(isequal(x), keep), get_variables(eqs[i])))
+    end
+    subs = solve_for(eqs[idxs], to_eliminate)
+    subdict = Dict(lhss(subs) .=> rhss(subs))
+    eqs′ = eqs[setdiff(1:length(eqs), idxs)]
+    eqs′ = lhss(eqs′) .~ substitute.(rhss(eqs′), (subdict,))
+    return eqs′, subs
+end
+
+function make_lhs_0(eq)
+    eq.lhs isa Constant && iszero(eq.lhs) && return eq
+    0 ~ eq.lhs - eq.rhs
+end
+
+function equations(sys::ModelingToolkit.AbstractSystem; keep=nothing)
+    myeqs, outputs = eliminate_aliases(sys, keep)
+    eqs = [myeqs;
+           reduce(vcat,
+                  namespace_equations.(sys.systems);
+                  init=Equation[])]
+    vcat(eqs, make_lhs_0.(outputs))
 end
 
 function states(sys::AbstractSystem,args...)
