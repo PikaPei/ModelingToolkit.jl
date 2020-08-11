@@ -1,7 +1,9 @@
 using ModelingToolkit, OrdinaryDiffEq, Test
 
-@parameters t σ ρ β
-@variables x(t) y(t) z(t) a(t)
+test_equal(a, b) = @test isequal(simplify(a), simplify(b))
+
+@parameters t σ ρ β F(t)
+@variables x(t) y(t) z(t) a(t) u(t)
 @derivatives D'~t
 
 eqs = [D(x) ~ σ*(y-x),
@@ -11,15 +13,27 @@ eqs = [D(x) ~ σ*(y-x),
 
 lorenz1 = ODESystem(eqs,t,[x,y,z,a],[σ,ρ,β],name=:lorenz1)
 
-lorenz1_aliased = alias_elimination(lorenz1)
-length(equations(lorenz1_reduced)) = 3
-length(states(lorenz1_reduced)) = 3
+eqs_auto, outputs_auto = ModelingToolkit.eliminate_aliases(lorenz1, [x,y,z])
+
+eqs_staying = lorenz1.eqs[1:end-1]
+test_equal.(eqs_auto, lhss(eqs_staying) .~ substitute.(rhss(eqs_staying), (Dict(a=>x),)))
+@test isequal(outputs, [a ~ x])
+
+@test length(equations(lorenz1)) == 3
+# @test length(states(lorenz1)) == 3
 
 eqs = [D(x) ~ σ*(y-x),
        D(y) ~ x*(ρ-z)-y,
        D(z) ~ x*y - β*z]
+
+test_equal.(equations(lorenz1), eqs)
+
+#=
 test_lorenz1_aliased = ODESystem(eqs,t,[x,y,z],[σ,ρ,β],observed=[a ~ x],name=:lorenz1)
 
+@test isequal(ODESystem(equations(lorenz1), observed=observed(lorenz1), name=:lorenz1),
+              ODESystem(eqs,t,[x,y,z],[σ,ρ,β],observed=[a ~ x],name=:lorenz1))
+=#
 # Multi-System Reduction
 
 eqs1 = [D(x) ~ σ*(y-x) + F,
@@ -47,33 +61,34 @@ connected = ODESystem(Equation[],t,[],[],observed=connections2,systems=[lorenz1,
 
 # Reduced Flattened System
 
+flatten(sys::ModelingToolkit.AbstractSystem) = ODESystem(ModelingToolkit.allequations(sys),
+                                                         independent_variable(sys),
+                                                         states(sys),
+                                                         parameters(sys))
 flattened_system = flatten(connected)
-flatten(sys::AbstractSystem) = ODESystem(equations(sys),states(sys),parameters(sys),independent_variable(sys))
 
-aliased_flattened_system = alias_elimination(flattened_system)
+#states(flattened_system) == [
+#        lorenz1.x
+#        lorenz1.y
+#        lorenz1.z
+#        lorenz2.x
+#        lorenz2.y
+#        lorenz2.z
+#]
 
-states(reduced_flattened_system) == [
-        lorenz1.x
-        lorenz1.y
-        lorenz1.z
-        lorenz2.x
-        lorenz2.y
-        lorenz2.z
-]
+# parameters(reduced_flattened_system) == [
+#         lorenz1.σ
+#         lorenz1.ρ
+#         lorenz1.β
+#         lorenz2.σ
+#         lorenz2.ρ
+#         lorenz2.β
+# ]
 
-parameters(reduced_flattened_system) == [
-        lorenz1.σ
-        lorenz1.ρ
-        lorenz1.β
-        lorenz2.σ
-        lorenz2.ρ
-        lorenz2.β
-]
-
-equations(reduced_flattened_system) == [
+equations(flattened_system) == [
        D(lorenz1.x) ~ lorenz1.σ*(lorenz1.y-lorenz1.x) + lorenz2.x - lorenz2.y - lorenz2.z,
        D(lorenz1.y) ~ lorenz1.x*(ρ-z)-lorenz1.x - lorenz1.y + lorenz1.z,
-       D(lorenz1.z) ~ lorenz1.x*lorenz1.y - lorenz1.β*lorenz1.z
+       D(lorenz1.z) ~ lorenz1.x*lorenz1.y - lorenz1.β*lorenz1.z,
        D(lorenz2.x) ~ lorenz1.x + lorenz1.y - lorenz1.z,
        D(lorenz2.y) ~ lorenz2.x*(lorenz2.ρ-lorenz2.z)-lorenz2.x,
        D(lorenz2.z) ~ lorenz2.x*lorenz2.y - lorenz2.β*lorenz2.z]

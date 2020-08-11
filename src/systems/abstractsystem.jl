@@ -191,11 +191,8 @@ independent_variable(sys::AbstractSystem) = sys.iv
 states(sys::AbstractSystem) = unique(isempty(sys.systems) ? setdiff(sys.states, convert.(Variable,sys.pins)) : [sys.states;reduce(vcat,namespace_variables.(sys.systems))])
 parameters(sys::AbstractSystem) = isempty(sys.systems) ? sys.ps : [sys.ps;reduce(vcat,namespace_parameters.(sys.systems))]
 pins(sys::AbstractSystem) = isempty(sys.systems) ? sys.pins : [sys.pins;reduce(vcat,namespace_pins.(sys.systems))]
-function observed(sys::AbstractSystem)
-    [sys.observed;
-     reduce(vcat,
-            (namespace_equation.(s.observed, s.name, s.iv.name) for s in sys.systems),
-            init=Equation[])]
+function observed(sys::AbstractSystem; keep=nothing)
+    allequations(sys; keep=keep, diffeqs=false, alias_zero_lhs=false)
 end
 
 function states(sys::AbstractSystem,name::Symbol)
@@ -245,13 +242,23 @@ function make_lhs_0(eq)
     0 ~ eq.lhs - eq.rhs
 end
 
-function equations(sys::ModelingToolkit.AbstractSystem; keep=nothing)
+function allequations(sys::ModelingToolkit.AbstractSystem; keep=nothing, diffeqs=true, aliases=true, alias_zero_lhs=true)
     myeqs, outputs = eliminate_aliases(sys, keep)
     eqs = [myeqs;
            reduce(vcat,
                   namespace_equations.(sys.systems);
                   init=Equation[])]
-    vcat(eqs, make_lhs_0.(outputs))
+
+    vcat(diffeqs ? eqs : [],
+         aliases ? (alias_zero_lhs ? make_lhs_0.(outputs) : outputs) : [])
+end
+
+function equations(sys::ModelingToolkit.AbstractSystem; keep=nothing)
+    allequations(sys; keep=keep, aliases=false)
+end
+
+function equations(sys::ModelingToolkit.AbstractSystem; keep=nothing)
+    allequations(sys; keep=keep, aliases=false)
 end
 
 function states(sys::AbstractSystem,args...)
